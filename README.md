@@ -72,4 +72,4 @@ Encontramos dois bugs de dados inválidos: duração `<= 0` sendo aceita e créd
 ---
 
 ## Parte 4 — Espaço livre (opcional)
-Clean code 01 e 06 estão no mesmo commit!
+Clean code 02 e 06 estão no mesmo commit!
