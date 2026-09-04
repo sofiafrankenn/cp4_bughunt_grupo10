@@ -1,5 +1,8 @@
 # Checkpoint 4 — Bug Hunt StreamFIAP
 
+> Copie este arquivo para a raiz do seu repositório com o nome **README.md**
+> e preencha todas as seções.
+
 ## Identificação
 
 **Grupo:** 10
@@ -20,6 +23,9 @@
 ---
 
 ## Parte 1 — Bugs encontrados
+
+> Uma linha por bug, na ordem em que você os encontrou. Use a numeração dos seus
+> commits (`fix: bug01 ...`). Preencha TODAS as colunas — metade da nota está aqui.
 
 | # | Sintoma observado (o que fiz/vi) | Causa raiz (arquivo e linha aproximada) | Correção aplicada | Conceito da disciplina |
 |---|---|---|---|---|
@@ -51,25 +57,28 @@
 
 ## Parte 3 — Perguntas de reflexão
 
+> Responda com suas palavras, 5 a 10 linhas cada, **usando o código real do projeto
+> como exemplo**. Respostas genéricas de tutorial não pontuam.
+
 ### 1. Injeção de dependência (Aula 13)
-O Spring gerencia o ciclo de vida do `ConteudoRepository` como um *bean*: ele cria a implementação real da interface (proxy do Spring Data JPA), abre/gerencia a conexão com o banco e injeta essa instância pronta no `ConteudoController` via `@Autowired`. Se fizéssemos `new ConteudoRepository()`, não funcionaria porque `ConteudoRepository` é uma *interface* — não existe implementação escrita por nós; quem gera a implementação em tempo de execução é o container do Spring, com base no contrato da interface. Além disso, deixar o Spring injetar permite trocar a implementação (ex.: um mock em teste) sem mudar o controller.
+O `ConteudoRepository` é só uma interface, não existe uma classe nossa implementando ela — quem cria essa implementação é o próprio Spring, quando a aplicação sobe. Por isso não dá pra fazer `new ConteudoRepository()`: não existe corpo escrito pra essa interface no nosso código, só quem sabe montar isso é o Spring Data JPA. Quando colocamos `@Autowired` no `ConteudoController`, estamos avisando o Spring que precisamos desse objeto, e ele entrega a implementação pronta. Isso também facilita trocar essa implementação depois (por exemplo, num teste) sem precisar mudar o controller.
 
 ### 2. JDBC vs Spring Data JPA (Aulas 12 e 13)
-No `ProdutoDAO` da Aula 12 escrevíamos manualmente `Connection`, `PreparedStatement`, `ResultSet`, tratávamos `SQLException` e convertíamos linha a linha para objeto. O Spring Data JPA automatiza tudo isso: só declarando a interface `ConteudoRepository extends JpaRepository<Conteudo, Long>` já temos `save`, `findAll`, `findById` etc. prontos. O `findByCategoria(String categoria)` funciona sem implementação porque o Spring Data interpreta o **nome do método** (`findBy` + nome do atributo `Categoria`) e gera a query JPQL/SQL automaticamente. O JDBC/DAO na mão ainda vale a pena quando a query é muito específica/complexa e o "query derivation" do Spring Data não dá conta.
+Na Aula 12, no `ProdutoDAO`, a gente escrevia manualmente `Connection`, `PreparedStatement` e `ResultSet`, e ainda tratava `SQLException` na mão. Aqui, o `ConteudoRepository` faz o CRUD inteiro só estendendo `JpaRepository`, sem escrever nenhuma linha de implementação. O `findByCategoria` funciona porque o Spring Data lê o nome do método (`findBy` + `Categoria`) e monta a query sozinho, sem a gente escrever SQL. O JDBC ainda faz sentido quando a consulta é complexa demais pra esse padrão de nome resolver, mas pra CRUD simples o Spring Data poupa bastante código repetitivo.
 
 ### 3. Exceções checked vs unchecked (Aula 11)
-`ClassificacaoIndicativaException extends Exception` é uma exceção *checked*: o compilador obriga a declarar `throws` (por isso `Usuario.alugar` e `AluguelController.alugar` têm `throws ClassificacaoIndicativaException`). O bug era que, mesmo sendo lançada corretamente, não existia `@ExceptionHandler` para ela no `GlobalExceptionHandler` — então o Spring devolvia o erro 500 padrão, sem a mensagem da regra de negócio. A correção foi adicionar um handler específico que captura essa exceção e devolve um JSON com a mensagem (`403 Forbidden`), como já era feito para as exceções *unchecked* (`CreditosInsuficientesException`, `ConteudoIndisponivelException`, que estendem `RuntimeException` e por isso não exigem `throws` na assinatura).
+`ClassificacaoIndicativaException` estende `Exception`, então é uma exceção checked — o compilador obriga a declarar `throws` em quem a usa, e é por isso que `alugar()` e `AluguelController` têm esse `throws` na assinatura. O bug era que, mesmo sendo lançada corretamente, o `GlobalExceptionHandler` não tinha nenhum `@ExceptionHandler` pra ela, então o Spring devolvia o erro 500 genérico em vez da mensagem da regra de negócio. Corrigimos adicionando um handler específico pra essa exceção, do mesmo jeito que já existia pras exceções unchecked (`CreditosInsuficientesException` e `ConteudoIndisponivelException`, que estendem `RuntimeException` e por isso não precisam de `throws`).
 
 ### 4. Sobrescrita vs sobrecarga (Aula 7)
-A `Serie` tinha `public double calcularPrecoAluguel(double desconto)`, com um parâmetro a mais do que `Conteudo.calcularPrecoAluguel()`. Isso não é *override* — é *overload*: um método novo, com assinatura diferente, que coexiste com o método herdado em vez de substituí-lo. Como ninguém nunca chamava a versão com parâmetro, toda série calculava o preço pelo método padrão da superclasse (R$ 9,90 fixo), ignorando completamente `numeroTemporadas`. Se a anotação `@Override` estivesse presente desde o início, o compilador teria acusado erro (`method does not override a method from its superclass`), pois a assinatura não batia — o bug teria sido pego na hora de compilar, e não em produção.
+Esse foi o bug mais difícil de achar. O método da `Serie` era `calcularPrecoAluguel(double desconto)`, com um parâmetro a mais do que o método da `Conteudo`. Parecia que estava sobrescrevendo, mas na verdade é overload: um método novo, com assinatura diferente, que fica ao lado do herdado em vez de substituí-lo. Como ninguém chamava essa versão com parâmetro, toda série usava o preço padrão da superclasse (9,90) e ignorava o número de temporadas. Se a gente tivesse colocado `@Override` desde o início, o compilador teria acusado erro, porque a assinatura não bate com nenhum método da superclasse — o bug teria aparecido na hora de compilar.
 
 ### 5. Onde blindar o objeto? (Aulas 3, 4 e 13)
-Encontramos dois bugs de dados inválidos: duração `<= 0` sendo aceita e créditos podendo ficar negativos. A duração é uma invariante do próprio objeto `Conteudo` — não faz sentido existir um `Conteudo` com duração zero/negativa em nenhum contexto, então a validação foi colocada no **construtor** da superclasse, garantindo que nenhum objeto inválido seja instanciado. Já a regra de créditos suficientes depende de uma *interação* entre dois objetos (`Usuario` e `Conteudo`) no momento do aluguel — por isso ela mora em `Usuario.alugar()`/`temCreditosSuficientes()`, um método de negócio, e não num setter isolado. Validar só no setter não seria suficiente, porque o setter não sabe qual é o preço do conteúdo sendo alugado; e validar só no controller não seria suficiente porque outra parte do sistema poderia criar o objeto sem passar pelo controller (ex.: testes, outro service). A regra tem que estar onde a decisão é tomada.
+Encontramos bugs de duração zerada/negativa sendo aceita e de créditos que podiam ficar negativos. A duração é uma regra que vale sempre pra qualquer conteúdo, então colocamos a validação no construtor da `Conteudo` — assim nenhum objeto inválido chega a existir. Já a regra de créditos suficientes depende do preço do conteúdo que está sendo alugado no momento, então não daria pra validar isso num setter isolado, porque o setter não tem essa informação; por isso ela ficou dentro do próprio `alugar()`, que é onde as duas informações se encontram. Ou seja: regra que é sempre verdadeira sobre o objeto fica no construtor; regra que depende de uma interação com outro objeto fica no método que participa dessa interação.
 
 ### 6. Abstração e interface (Aulas 8 e 9)
-`Conteudo` é uma classe abstrata porque representa um conceito comum (`titulo`, `duracaoMinutos`, `calcularPrecoAluguel`...) que **nunca existe sozinho** — só existe como Filme, Série ou Documentário; ela também compartilha estado (atributos) com as subclasses via herança. `Promocionavel` é uma interface porque representa uma **capacidade** (poder ter desconto) que é ortogonal à hierarquia de herança — Filme e Série têm essa capacidade, Documentário não, sem que isso mude a árvore de herança. Se o Documentário passasse a ter promoções, bastaria: (1) fazer `Documentario implements Promocionavel` e (2) implementar `aplicarPromocao(double preco)`. Nenhuma linha de `Conteudo`, `Filme` ou `Serie` precisaria mudar, porque `calcularPrecoPromocional()` já verifica `instanceof Promocionavel` de forma genérica. Isso mostra que separar "o que a classe é" (herança) de "o que a classe consegue fazer" (interface) deixa o sistema aberto para extensão sem exigir alteração no código existente.
+`Conteudo` é abstrata porque nunca deveria existir sozinha — só faz sentido como Filme, Série ou Documentário, e por isso concentra os atributos e métodos comuns aos três. Já `Promocionavel` é interface porque representa uma capacidade separada da hierarquia: só Filme e Série têm promoção, Documentário não, e isso não muda a árvore de herança. Se o Documentário passasse a ter promoção, bastaria fazer ele implementar `Promocionavel` e escrever o próprio `aplicarPromocao` — nenhuma linha de `Conteudo`, `Filme` ou `Serie` precisaria mudar, porque `calcularPrecoPromocional()` já verifica quem é `Promocionavel` de forma genérica. Isso mostra que separar "o que a classe é" de "o que ela consegue fazer" deixa o sistema mais fácil de estender sem mexer no que já funciona.
 
 ---
 
 ## Parte 4 — Espaço livre (opcional)
-Clean code 02 e 06 estão no mesmo commit!
+O clean code 02 e 06 estão no mesmo commit!
